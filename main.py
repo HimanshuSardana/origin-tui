@@ -4,7 +4,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Key
 from textual.message import Message
-from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, Input
+from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, Input, TextArea
 
 API_BASE = "http://localhost:8080"
 
