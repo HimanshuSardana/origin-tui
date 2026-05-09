@@ -2,7 +2,7 @@ import asyncio
 import httpx
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, Input
+from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, Input, TextArea
 
 API_BASE = "http://localhost:8080"
 
@@ -73,6 +73,17 @@ class OriginApp(App):
         border: solid $accent;
     }
 
+    #compose-area {
+        width: 100%;
+        height: 3;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #compose-area:focus {
+        border: solid $accent;
+    }
+
     #messages-empty {
         width: 100%;
         height: 100%;
@@ -101,6 +112,8 @@ class OriginApp(App):
         ("1", "focus_contacts", "Contacts"),
         ("2", "focus_messages", "Messages"),
         ("slash", "focus_search", "Search"),
+        ("c", "focus_compose", "Compose"),
+        ("ctrl+enter", "send_message", "Send"),
     ]
 
     def __init__(self):
@@ -122,6 +135,7 @@ class OriginApp(App):
                 yield Static("Messages", classes="title")
                 with VerticalScroll(id="messages-container"):
                     yield Static("Select a contact to view messages", id="messages-empty")
+                yield TextArea(id="compose-area", disabled=True)
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -190,6 +204,34 @@ class OriginApp(App):
     async def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()
 
+    async def action_focus_compose(self) -> None:
+        if self.current_contact is not None:
+            self.query_one("#compose-area", TextArea).focus()
+
+    async def action_send_message(self) -> None:
+        if self.current_contact is None:
+            return
+        text_area = self.query_one("#compose-area", TextArea)
+        message = text_area.text.strip()
+        if not message:
+            return
+        jid = self.current_contact.get("jid", "")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{API_BASE}/messages/send",
+                    json={"jid": jid, "message": message},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+        except Exception as e:
+            container = self.query_one("#messages-container", VerticalScroll)
+            container.remove_children()
+            await container.mount(Static(f"Send failed: {e}"))
+            return
+        text_area.text = ""
+        await self._load_messages(self.current_contact)
+
     async def action_refresh(self) -> None:
         messages_container = self.query_one("#messages-container", VerticalScroll)
         if messages_container.has_focus:
@@ -227,6 +269,8 @@ class OriginApp(App):
         name = self._contact_name(contact)
         container = self.query_one("#messages-container", VerticalScroll)
         container.remove_children()
+        compose = self.query_one("#compose-area", TextArea)
+        compose.disabled = False
 
         try:
             async with httpx.AsyncClient() as client:
