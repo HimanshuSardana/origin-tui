@@ -127,11 +127,14 @@ class OriginApp(App):
             return
 
         for contact in self.contacts:
-            name = contact.get("name") or contact.get("jid", "Unknown")
-            list_view.append(ListItem(Label(name), id=f"contact-{contact.get('jid', '')}"))
+            name = contact.get("name")
+            if not name:
+                jid = contact.get("jid", "")
+                name = jid.split("@")[0] if "@" in jid else jid
+            list_view.append(ListItem(Label(name)))
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
-        index = event.list_view.index
+        index = event.index
         if index is None or index < 0 or index >= len(self.contacts):
             return
 
@@ -140,7 +143,7 @@ class OriginApp(App):
         name = contact.get("name") or jid
 
         container = self.query_one("#messages-container", VerticalScroll)
-        await container.remove_children()
+        container.remove_children()
 
         loading = Static(f"Loading messages for {name}...")
         await container.mount(loading)
@@ -155,11 +158,11 @@ class OriginApp(App):
                 resp.raise_for_status()
                 self.messages = resp.json()
         except Exception as e:
-            await container.remove_children()
+            container.remove_children()
             await container.mount(Static(f"Error loading messages: {e}"))
             return
 
-        await container.remove_children()
+        container.remove_children()
 
         if not self.messages:
             await container.mount(Static(f"No messages with {name}."))
