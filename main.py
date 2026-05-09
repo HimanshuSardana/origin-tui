@@ -96,7 +96,7 @@ class OriginApp(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("r", "refresh_contacts", "Refresh"),
+        ("r", "refresh", "Refresh"),
         ("1", "focus_contacts", "Contacts"),
         ("2", "focus_messages", "Messages"),
         ("slash", "focus_search", "Search"),
@@ -106,6 +106,7 @@ class OriginApp(App):
         self.contacts: list[dict] = []
         self.displayed_contacts: list[dict] = []
         self.messages: list[dict] = []
+        self.current_contact: dict | None = None
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -179,20 +180,43 @@ class OriginApp(App):
     async def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()
 
-    async def on_list_view_selected(self, event: ListView.Selected) -> None:
-        index = event.index
-        if index is None or index < 0 or index >= len(self.displayed_contacts):
-            return
+    async def action_refresh(self) -> None:
+        messages_container = self.query_one("#messages-container", VerticalScroll)
+        if messages_container.has_focus:
+            if self.current_contact is None:
+                return
+            await self._sync_and_load(self.current_contact)
+        else:
+            await self.action_refresh_contacts()
 
-        contact = self.displayed_contacts[index]
+    async def _sync_and_load(self, contact: dict) -> None:
         jid = contact.get("jid", "")
         name = self._contact_name(contact)
-
         container = self.query_one("#messages-container", VerticalScroll)
         container.remove_children()
-
-        loading = Static(f"Loading messages for {name}...")
+        loading = Static(f"Syncing messages for {name}...")
         await container.mount(loading)
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{API_BASE}/messages/sync",
+                    params={"jid": jid, "limit": 50},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+        except Exception as e:
+            container.remove_children()
+            await container.mount(Static(f"Sync failed: {e}"))
+            return
+
+        await self._load_messages(contact)
+
+    async def _load_messages(self, contact: dict) -> None:
+        jid = contact.get("jid", "")
+        name = self._contact_name(contact)
+        container = self.query_one("#messages-container", VerticalScroll)
+        container.remove_children()
 
         try:
             async with httpx.AsyncClient() as client:
@@ -204,11 +228,8 @@ class OriginApp(App):
                 resp.raise_for_status()
                 self.messages = resp.json()
         except Exception as e:
-            container.remove_children()
             await container.mount(Static(f"Error loading messages: {e}"))
             return
-
-        container.remove_children()
 
         if not self.messages:
             await container.mount(Static(f"No messages with {name}."))
@@ -216,6 +237,15 @@ class OriginApp(App):
 
         for msg in self.messages:
             await container.mount(MessageItem(msg))
+
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
+        index = event.index
+        if index is None or index < 0 or index >= len(self.displayed_contacts):
+            return
+
+        contact = self.displayed_contacts[index]
+        self.current_contact = contact
+        await self._load_messages(contact)
 
 
 def main():
