@@ -242,6 +242,10 @@ class OriginApp(App):
     async def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()
 
+    async def action_focus_compose(self) -> None:
+        if self.current_contact is not None:
+            self.query_one("#compose-area", ComposeArea).focus()
+
     async def action_copy_message(self) -> None:
         messages_list = self.query_one("#messages-list", ListView)
         if not messages_list.has_focus:
