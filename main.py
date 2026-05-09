@@ -42,9 +42,9 @@ class VimListView(ListView):
         event.stop()
         self.action_cursor_up()
 
-    def key_c(self, event: Key) -> None:
+    async def key_c(self, event: Key) -> None:
         event.stop()
-        self.app.action_focus_compose()
+        await self.app.action_focus_compose()
 
     def key_g(self, event: Key) -> None:
         event.stop()
@@ -152,6 +152,7 @@ class OriginApp(App):
         ("c", "focus_compose", "Compose"),
         ("g", "vim_top", "Top"),
         ("G", "vim_bottom", "Bottom"),
+        ("escape", "focus_contacts", "Contacts"),
     ]
 
     def __init__(self):
@@ -244,8 +245,9 @@ class OriginApp(App):
 
     async def action_focus_compose(self) -> None:
         if self.current_contact is not None:
-            self.query_one("#compose-area", ComposeArea).focus()
-            self.notify("Compose focused", timeout=1)
+            compose = self.query_one("#compose-area", ComposeArea)
+            compose.disabled = False
+            compose.focus()
 
     async def action_copy_message(self) -> None:
         messages_list = self.query_one("#messages-list", ListView)
