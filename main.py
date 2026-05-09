@@ -1,8 +1,7 @@
-import asyncio
 import httpx
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import ListView, ListItem, Label, Static, Header, Footer
+from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, Input
 
 API_BASE = "http://localhost:8080"
 
@@ -41,6 +40,17 @@ class OriginApp(App):
         border-right: solid $primary;
     }
 
+    #search-input {
+        width: 100%;
+        height: auto;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #search-input:focus {
+        border: solid $accent;
+    }
+
     #contacts-list {
         width: 100%;
         height: 1fr;
@@ -55,6 +65,11 @@ class OriginApp(App):
         width: 100%;
         height: 1fr;
         padding: 1 2;
+        border: solid $background-lighten-1;
+    }
+
+    #messages-container:focus {
+        border: solid $accent;
     }
 
     #messages-empty {
@@ -77,25 +92,19 @@ class OriginApp(App):
     ListView:focus {
         border: solid $accent;
     }
-
-    ListView > ListItem.--highlight {
-        background: $accent;
-        color: $text;
-    }
-
-    ListView > ListItem.--highlight > Widget {
-        background: $accent;
-        color: $text;
-    }
     """
 
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh_contacts", "Refresh"),
+        ("1", "focus_contacts", "Contacts"),
+        ("2", "focus_messages", "Messages"),
+        ("slash", "focus_search", "Search"),
     ]
 
     def __init__(self):
         self.contacts: list[dict] = []
+        self.displayed_contacts: list[dict] = []
         self.messages: list[dict] = []
         super().__init__()
 
@@ -104,6 +113,7 @@ class OriginApp(App):
         with Horizontal(id="main-layout"):
             with Vertical(id="contacts-panel"):
                 yield Static("Contacts", classes="title")
+                yield Input(placeholder="Search contacts...", id="search-input")
                 yield ListView(id="contacts-list")
             with Vertical(id="messages-panel"):
                 yield Static("Messages", classes="title")
@@ -113,6 +123,7 @@ class OriginApp(App):
 
     async def on_mount(self) -> None:
         await self.action_refresh_contacts()
+        self.query_one("#contacts-list", ListView).focus()
 
     async def action_refresh_contacts(self) -> None:
         list_view = self.query_one("#contacts-list", ListView)
@@ -124,23 +135,58 @@ class OriginApp(App):
                 self.contacts = resp.json()
         except Exception as e:
             list_view.append(ListItem(Label(f"Error: {e}")))
+            self.displayed_contacts = []
             return
 
-        for contact in self.contacts:
-            name = contact.get("name")
-            if not name:
-                jid = contact.get("jid", "")
-                name = jid.split("@")[0] if "@" in jid else jid
-            list_view.append(ListItem(Label(name)))
+        self.displayed_contacts = self.contacts[:]
+        self._populate_list()
+
+    def _contact_name(self, contact: dict) -> str:
+        name = contact.get("name")
+        if name:
+            return name
+        jid = contact.get("jid", "")
+        return jid.split("@")[0] if "@" in jid else jid
+
+    def _populate_list(self) -> None:
+        list_view = self.query_one("#contacts-list", ListView)
+        list_view.clear()
+        for contact in self.displayed_contacts:
+            list_view.append(ListItem(Label(self._contact_name(contact))))
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "search-input":
+            return
+        query = event.value.lower()
+        if not query:
+            self.displayed_contacts = self.contacts[:]
+        else:
+            self.displayed_contacts = [
+                c for c in self.contacts if query in self._contact_name(c).lower()
+            ]
+        self._populate_list()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "search-input":
+            self.query_one("#contacts-list", ListView).focus()
+
+    async def action_focus_contacts(self) -> None:
+        self.query_one("#contacts-list", ListView).focus()
+
+    async def action_focus_messages(self) -> None:
+        self.query_one("#messages-container", VerticalScroll).focus()
+
+    async def action_focus_search(self) -> None:
+        self.query_one("#search-input", Input).focus()
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         index = event.index
-        if index is None or index < 0 or index >= len(self.contacts):
+        if index is None or index < 0 or index >= len(self.displayed_contacts):
             return
 
-        contact = self.contacts[index]
+        contact = self.displayed_contacts[index]
         jid = contact.get("jid", "")
-        name = contact.get("name") or jid
+        name = self._contact_name(contact)
 
         container = self.query_one("#messages-container", VerticalScroll)
         container.remove_children()
