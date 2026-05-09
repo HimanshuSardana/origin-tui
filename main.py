@@ -33,6 +33,16 @@ class ComposeBlur(Message):
     pass
 
 
+class VimListView(ListView):
+    def key_j(self, event: Key) -> None:
+        event.stop()
+        self.action_cursor_down()
+
+    def key_k(self, event: Key) -> None:
+        event.stop()
+        self.action_cursor_up()
+
+
 class ComposeArea(TextArea):
     def key_ctrl_enter(self, event: Key) -> None:
         event.stop()
@@ -128,6 +138,8 @@ class OriginApp(App):
         ("slash", "focus_search", "Search"),
         ("y", "copy_message", "Yank"),
         ("c", "focus_compose", "Compose"),
+        ("g", "vim_top", "Top"),
+        ("G", "vim_bottom", "Bottom"),
     ]
 
     def __init__(self):
@@ -136,6 +148,7 @@ class OriginApp(App):
         self.messages: list[dict] = []
         self.current_contact: dict | None = None
         self._search_task: asyncio.Task | None = None
+        self._vim_g_pending: asyncio.Task | None = None
         super().__init__(ansi_color=True)
 
     def compose(self) -> ComposeResult:
@@ -144,10 +157,10 @@ class OriginApp(App):
             with Vertical(id="contacts-panel"):
                 yield Static("Contacts", classes="title")
                 yield Input(placeholder="Search contacts...", id="search-input")
-                yield ListView(id="contacts-list")
+                yield VimListView(id="contacts-list")
             with Vertical(id="messages-panel"):
                 yield Static("Messages", classes="title")
-                yield ListView(id="messages-list")
+                yield VimListView(id="messages-list")
                 yield ComposeArea(id="compose-area", disabled=True)
         yield Footer()
 
@@ -229,6 +242,37 @@ class OriginApp(App):
         if text:
             copy_to_clipboard(text.strip())
             self.notify("Copied to clipboard", severity="information", timeout=1.5)
+
+    async def action_vim_top(self) -> None:
+        focused = self.query_one("#contacts-list, #messages-list", ListView)
+        if not focused.has_focus:
+            return
+        # Cancel pending gg
+        if self._vim_g_pending is not None:
+            self._vim_g_pending.cancel()
+            self._vim_g_pending = None
+        # Start a small window — second 'g' within 300ms means gg
+        self._vim_g_pending = asyncio.create_task(self._vim_gg_wait(focused))
+
+    async def action_vim_gg_wait(self, focused: ListView) -> None:
+        await asyncio.sleep(0.3)
+        self._vim_g_pending = None
+        if focused.has_focus:
+            focused.move_cursor(0, 0, bool(True))
+
+    async def action_vim_bottom(self) -> None:
+        focused = self.query_one("#contacts-list, #messages-list", ListView)
+        if not focused.has_focus:
+            return
+        # Cancel gg pending
+        if self._vim_g_pending is not None:
+            self._vim_g_pending.cancel()
+            self._vim_g_pending = None
+        focused.action_cursor_down()
+        # Move to last item
+        children = list(focused.children)
+        if children:
+            focused.move_cursor(0, len(children) - 1, bool(True))
 
     async def action_send_message(self) -> None:
         if self.current_contact is None:
