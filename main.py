@@ -1,7 +1,10 @@
 import asyncio
 import httpx
+import mimetypes
+import os
 import subprocess
 import shutil
+import tempfile
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.events import Key
@@ -107,29 +110,9 @@ class OriginApp(App):
         padding: 0 1;
     }
 
-    .msg-time {
-        color: $text-muted;
-        text-style: dim;
-    }
-
-    .msg-sender {
-        color: $text-accent;
-        text-style: bold;
-    }
-
-    .msg-type {
-        color: $warning;
-        text-style: italic;
-    }
-
-    .msg-display {
-        color: $text;
-        width: 100%;
-    }
-
-    .msg-url {
+    .msg-media {
         color: $success;
-        text-style: underline;
+        text-style: bold;
     }
 
     ListView:focus {
@@ -341,11 +324,14 @@ class OriginApp(App):
         sender = msg.get("sender", "unknown")
         display = msg.get("display", "")
         msg_type = msg.get("type", "text")
+        has_media = msg.get("has_media", False)
 
         lines: list[str] = []
         header = f"[{time}] {sender}"
         if msg_type != "text":
             header += f" [{msg_type}]"
+        if has_media:
+            header += " 📎"
         lines.append(header)
         lines.append(display)
 
@@ -360,6 +346,77 @@ class OriginApp(App):
             contact = self.displayed_contacts[index]
             self.current_contact = contact
             await self._load_messages(contact)
+        elif event.list_view.id == "messages-list":
+            await self._open_message_media(event.index)
+
+    async def _open_message_media(self, index: int | None) -> None:
+        if index is None or index < 0 or index >= len(self.messages):
+            return
+        msg = self.messages[index]
+        if not msg.get("has_media") or not msg.get("media_url"):
+            return
+
+        media_url = msg["media_url"]
+        display = msg.get("display", "file")
+        filename_base = display.strip("[]").strip() or "file"
+        msg_type = msg.get("type", "other")
+
+        if not shutil.which("xdg-open"):
+            self.notify("xdg-open not found", severity="error", timeout=2)
+            return
+
+        temp_dir = tempfile.mkdtemp(prefix="origin-tui-")
+        temp_path = os.path.join(temp_dir, "download")
+
+        try:
+            self.notify("Downloading media...", timeout=1.5)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(media_url, timeout=30.0, follow_redirects=True)
+                resp.raise_for_status()
+                with open(temp_path, "wb") as f:
+                    f.write(resp.content)
+        except Exception as e:
+            self.notify(f"Download failed: {e}", severity="error", timeout=3)
+            return
+
+        ext = await self._detect_extension(temp_path, msg_type)
+        final_name = f"{filename_base}{ext}"
+        # Sanitize filename
+        final_name = "".join(c for c in final_name if c.isalnum() or c in " ._-").strip()
+        if not final_name:
+            final_name = f"file{ext}"
+        final_path = os.path.join(temp_dir, final_name)
+        os.rename(temp_path, final_path)
+
+        try:
+            await asyncio.create_subprocess_exec("xdg-open", final_path)
+            self.notify(f"Opened {final_name}", timeout=1.5)
+        except Exception as e:
+            self.notify(f"Open failed: {e}", severity="error", timeout=3)
+
+    async def _detect_extension(self, filepath: str, msg_type: str) -> str:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "file", "--mime-type", "-b", filepath,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            mime = stdout.decode().strip()
+            ext = mimetypes.guess_extension(mime)
+            if ext:
+                return ext
+        except Exception:
+            pass
+
+        fallback = {
+            "image": ".jpg",
+            "video": ".mp4",
+            "document": ".bin",
+            "audio": ".ogg",
+            "sticker": ".webp",
+        }
+        return fallback.get(msg_type, ".bin")
 
 
 def main():
