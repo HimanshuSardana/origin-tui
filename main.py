@@ -1,7 +1,9 @@
 import asyncio
 import httpx
+import subprocess
+import shutil
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.events import Key
 from textual.message import Message
 from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, Input, TextArea
@@ -9,23 +11,15 @@ from textual.widgets import ListView, ListItem, Label, Static, Header, Footer, I
 API_BASE = "http://localhost:8080"
 
 
-class MessageItem(Static):
-    def __init__(self, message: dict, **kwargs):
-        self.msg = message
-        super().__init__(**kwargs)
-
-    def compose(self) -> ComposeResult:
-        sender = self.msg.get("sender", "unknown")
-        time = self.msg.get("time", "")
-        display = self.msg.get("display", "")
-        msg_type = self.msg.get("type", "text")
-
-        header = f"[{time}] {sender}"
-        if msg_type != "text":
-            header += f" ({msg_type})"
-
-        yield Label(header, classes="msg-header")
-        yield Label(display, classes="msg-body")
+def copy_to_clipboard(text: str) -> None:
+    if shutil.which("wl-copy"):
+        subprocess.run(["wl-copy"], input=text.encode(), check=False)
+    elif shutil.which("xclip"):
+        subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode(), check=False)
+    elif shutil.which("xsel"):
+        subprocess.run(["xsel", "--clipboard", "--input"], input=text.encode(), check=False)
+    elif shutil.which("pbcopy"):
+        subprocess.run(["pbcopy"], input=text.encode(), check=False)
 
 
 class ComposeSend(Message):
@@ -86,14 +80,13 @@ class OriginApp(App):
         height: 100%;
     }
 
-    #messages-container {
+    #messages-list {
         width: 100%;
         height: 1fr;
-        padding: 1 2;
         border: solid $background-lighten-1;
     }
 
-    #messages-container:focus {
+    #messages-list:focus {
         border: solid $accent;
     }
 
@@ -108,21 +101,35 @@ class OriginApp(App):
         border: solid $accent;
     }
 
-    #messages-empty {
+    .msg-row {
         width: 100%;
-        height: 100%;
-        content-align: center middle;
-        color: $text-muted;
+        height: auto;
+        padding: 0 1;
     }
 
-    .msg-header {
+    .msg-time {
+        color: $text-muted;
+        text-style: dim;
+    }
+
+    .msg-sender {
         color: $text-accent;
         text-style: bold;
-        margin-top: 1;
     }
 
-    .msg-body {
-        margin-bottom: 1;
+    .msg-type {
+        color: $warning;
+        text-style: italic;
+    }
+
+    .msg-display {
+        color: $text;
+        width: 100%;
+    }
+
+    .msg-url {
+        color: $success;
+        text-style: underline;
     }
 
     ListView:focus {
@@ -136,7 +143,7 @@ class OriginApp(App):
         ("1", "focus_contacts", "Contacts"),
         ("2", "focus_messages", "Messages"),
         ("slash", "focus_search", "Search"),
-        ("c", "focus_compose", "Compose"),
+        ("c", "copy_message", "Copy"),
     ]
 
     def __init__(self):
@@ -156,8 +163,7 @@ class OriginApp(App):
                 yield ListView(id="contacts-list")
             with Vertical(id="messages-panel"):
                 yield Static("Messages", classes="title")
-                with VerticalScroll(id="messages-container"):
-                    yield Static("Select a contact to view messages", id="messages-empty")
+                yield ListView(id="messages-list")
                 yield ComposeArea(id="compose-area", disabled=True)
         yield Footer()
 
@@ -179,7 +185,7 @@ class OriginApp(App):
             return
 
         self.displayed_contacts = self.contacts[:]
-        self._populate_list()
+        self._populate_contacts()
 
     def _contact_name(self, contact: dict) -> str:
         name = contact.get("name")
@@ -188,7 +194,7 @@ class OriginApp(App):
         jid = contact.get("jid", "")
         return jid.split("@")[0] if "@" in jid else jid
 
-    def _populate_list(self) -> None:
+    def _populate_contacts(self) -> None:
         list_view = self.query_one("#contacts-list", ListView)
         list_view.clear()
         for contact in self.displayed_contacts:
@@ -212,7 +218,7 @@ class OriginApp(App):
             self.displayed_contacts = [
                 c for c in self.contacts if query in self._contact_name(c).lower()
             ]
-        self._populate_list()
+        self._populate_contacts()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "search-input":
@@ -222,14 +228,23 @@ class OriginApp(App):
         self.query_one("#contacts-list", ListView).focus()
 
     async def action_focus_messages(self) -> None:
-        self.query_one("#messages-container", VerticalScroll).focus()
+        self.query_one("#messages-list", ListView).focus()
 
     async def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()
 
-    async def action_focus_compose(self) -> None:
-        if self.current_contact is not None:
-            self.query_one("#compose-area", ComposeArea).focus()
+    async def action_copy_message(self) -> None:
+        messages_list = self.query_one("#messages-list", ListView)
+        if not messages_list.has_focus:
+            return
+        index = messages_list.index
+        if index is None or index < 0 or index >= len(self.messages):
+            return
+        msg = self.messages[index]
+        text = msg.get("display", "")
+        if text:
+            copy_to_clipboard(text.strip())
+            self.notify("Copied to clipboard", severity="information", timeout=1.5)
 
     async def action_send_message(self) -> None:
         if self.current_contact is None:
@@ -248,9 +263,9 @@ class OriginApp(App):
                 )
                 resp.raise_for_status()
         except Exception as e:
-            container = self.query_one("#messages-container", VerticalScroll)
-            container.remove_children()
-            await container.mount(Static(f"Send failed: {e}"))
+            messages_list = self.query_one("#messages-list", ListView)
+            messages_list.clear()
+            await messages_list.mount(ListItem(Label(f"Send failed: {e}")))
             return
         text_area.text = ""
         await self._load_messages(self.current_contact)
@@ -262,8 +277,8 @@ class OriginApp(App):
         await self.action_focus_messages()
 
     async def action_refresh(self) -> None:
-        messages_container = self.query_one("#messages-container", VerticalScroll)
-        if messages_container.has_focus:
+        messages_list = self.query_one("#messages-list", ListView)
+        if messages_list.has_focus:
             if self.current_contact is None:
                 return
             await self._sync_and_load(self.current_contact)
@@ -273,10 +288,9 @@ class OriginApp(App):
     async def _sync_and_load(self, contact: dict) -> None:
         jid = contact.get("jid", "")
         name = self._contact_name(contact)
-        container = self.query_one("#messages-container", VerticalScroll)
-        container.remove_children()
-        loading = Static(f"Syncing messages for {name}...")
-        await container.mount(loading)
+        messages_list = self.query_one("#messages-list", ListView)
+        messages_list.clear()
+        await messages_list.mount(ListItem(Label(f"Syncing messages for {name}...")))
 
         try:
             async with httpx.AsyncClient() as client:
@@ -287,8 +301,8 @@ class OriginApp(App):
                 )
                 resp.raise_for_status()
         except Exception as e:
-            container.remove_children()
-            await container.mount(Static(f"Sync failed: {e}"))
+            messages_list.clear()
+            await messages_list.mount(ListItem(Label(f"Sync failed: {e}")))
             return
 
         await self._load_messages(contact)
@@ -296,8 +310,8 @@ class OriginApp(App):
     async def _load_messages(self, contact: dict) -> None:
         jid = contact.get("jid", "")
         name = self._contact_name(contact)
-        container = self.query_one("#messages-container", VerticalScroll)
-        container.remove_children()
+        messages_list = self.query_one("#messages-list", ListView)
+        messages_list.clear()
         compose = self.query_one("#compose-area", ComposeArea)
         compose.disabled = False
 
@@ -311,24 +325,41 @@ class OriginApp(App):
                 resp.raise_for_status()
                 self.messages = resp.json()
         except Exception as e:
-            await container.mount(Static(f"Error loading messages: {e}"))
+            await messages_list.mount(ListItem(Label(f"Error loading messages: {e}")))
             return
 
         if not self.messages:
-            await container.mount(Static(f"No messages with {name}."))
+            await messages_list.mount(ListItem(Label(f"No messages with {name}.")))
             return
 
         for msg in self.messages:
-            await container.mount(MessageItem(msg))
+            item = self._build_message_item(msg)
+            await messages_list.mount(item)
+
+    def _build_message_item(self, msg: dict) -> ListItem:
+        time = msg.get("time", "")
+        sender = msg.get("sender", "unknown")
+        display = msg.get("display", "")
+        msg_type = msg.get("type", "text")
+
+        lines: list[str] = []
+        header = f"[{time}] {sender}"
+        if msg_type != "text":
+            header += f" [{msg_type}]"
+        lines.append(header)
+        lines.append(display)
+
+        text = "\n".join(lines)
+        return ListItem(Label(text, classes="msg-row"))
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
-        index = event.index
-        if index is None or index < 0 or index >= len(self.displayed_contacts):
-            return
-
-        contact = self.displayed_contacts[index]
-        self.current_contact = contact
-        await self._load_messages(contact)
+        if event.list_view.id == "contacts-list":
+            index = event.index
+            if index is None or index < 0 or index >= len(self.displayed_contacts):
+                return
+            contact = self.displayed_contacts[index]
+            self.current_contact = contact
+            await self._load_messages(contact)
 
 
 def main():
