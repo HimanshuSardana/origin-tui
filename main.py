@@ -126,7 +126,8 @@ class OriginApp(App):
         ("1", "focus_contacts", "Contacts"),
         ("2", "focus_messages", "Messages"),
         ("slash", "focus_search", "Search"),
-        ("c", "copy_message", "Copy"),
+        ("y", "copy_message", "Yank"),
+        ("c", "focus_compose", "Compose"),
     ]
 
     def __init__(self):
