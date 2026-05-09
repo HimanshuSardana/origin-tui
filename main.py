@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -107,6 +108,7 @@ class OriginApp(App):
         self.displayed_contacts: list[dict] = []
         self.messages: list[dict] = []
         self.current_contact: dict | None = None
+        self._search_task: asyncio.Task | None = None
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -158,7 +160,15 @@ class OriginApp(App):
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "search-input":
             return
-        query = event.value.lower()
+        if self._search_task is not None:
+            self._search_task.cancel()
+        self._search_task = asyncio.create_task(
+            self._debounced_search(event.value)
+        )
+
+    async def _debounced_search(self, query: str) -> None:
+        await asyncio.sleep(0.2)
+        query = query.lower()
         if not query:
             self.displayed_contacts = self.contacts[:]
         else:
