@@ -42,6 +42,18 @@ class VimListView(ListView):
         event.stop()
         self.action_cursor_up()
 
+    def key_c(self, event: Key) -> None:
+        event.stop()
+        self.app.action_focus_compose()
+
+    def key_g(self, event: Key) -> None:
+        event.stop()
+        self.app.action_vim_top()
+
+    def key_shift_g(self, event: Key) -> None:
+        event.stop()
+        self.app.action_vim_bottom()
+
 
 class ComposeArea(TextArea):
     def key_ctrl_enter(self, event: Key) -> None:
