@@ -109,10 +109,10 @@ class OriginApp(App):
         self.messages: list[dict] = []
         self.current_contact: dict | None = None
         self._search_task: asyncio.Task | None = None
-        super().__init__()
+        super().__init__(ansi_color=True)
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield Header(name="Origin", show_clock=False)
         with Horizontal(id="main-layout"):
             with Vertical(id="contacts-panel"):
                 yield Static("Contacts", classes="title")
