@@ -15,10 +15,10 @@ API_BASE = "http://localhost:8080"
 
 
 def copy_to_clipboard(text: str) -> None:
-    if shutil.which("wl-copy"):
-        subprocess.run(["wl-copy"], input=text.encode(), check=False)
-    elif shutil.which("xclip"):
+    if shutil.which("xclip"):
         subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode(), check=False)
+    elif shutil.which("wl-copy"):
+        subprocess.run(["wl-copy"], input=text.encode(), check=False)
     elif shutil.which("xsel"):
         subprocess.run(["xsel", "--clipboard", "--input"], input=text.encode(), check=False)
     elif shutil.which("pbcopy"):
