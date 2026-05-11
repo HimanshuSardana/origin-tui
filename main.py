@@ -343,7 +343,7 @@ class OriginApp(App):
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{API_BASE}/messages/sync",
-                    params={"jid": jid, "limit": 50},
+                    params={"jid": jid, "limit": 20},
                     timeout=30.0,
                 )
                 resp.raise_for_status()
